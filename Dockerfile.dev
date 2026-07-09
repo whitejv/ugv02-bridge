@@ -1,0 +1,14 @@
+FROM osrf/ros:kilted-desktop
+
+# Install common tools
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    vim \
+    python3-colcon-common-extensions \
+    ros-kilted-xacro \
+    ros-kilted-navigation2 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+CMD ["bash"]

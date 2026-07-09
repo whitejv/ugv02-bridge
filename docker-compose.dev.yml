@@ -1,0 +1,15 @@
+services:
+  ros-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: ugv02-ros-dev
+    privileged: true
+    network_mode: host
+    volumes:
+      - .:/workspace
+      - /dev:/dev
+    environment:
+      - DISPLAY=${DISPLAY}
+    stdin_open: true
+    tty: true
