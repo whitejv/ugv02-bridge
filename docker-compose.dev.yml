@@ -8,6 +8,7 @@ services:
     network_mode: host
     volumes:
       - .:/workspace
+      - ${MOWGLI_HOST:-/Volumes/iHome/Users/dub/Code/mowglinext}:/mowgli:ro
       - /dev:/dev
     environment:
       - DISPLAY=${DISPLAY}

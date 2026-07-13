@@ -22,8 +22,8 @@ private:
 
     // Serial communication
     serial::Serial serial_port_;
-    std::string serial_port_name_ = "/dev/ttyACM0";   // ← Change if needed
-    int baud_rate_ = 115200;
+    std::string serial_port_name_;
+    int baud_rate_;
 
     // Reading thread
     std::unique_ptr<std::thread> read_thread_;
