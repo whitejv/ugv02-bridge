@@ -6,11 +6,15 @@ Custom hardware bridge connecting the Waveshare UGV02 (ESP32) to the MowgliNext 
 
 Start minimal: publish battery status from UGV02 so Mowgli can understand it.
 
+This package **replaces** MowgliNext’s stock serial hardware bridge (`mowgli_hardware` / `hardware_bridge`) for the Waveshare UGV02. Do not run both at once — they fight over the serial device and both publish `/power`.
+
 ## Package
 
 `ugv_mowgli_bridge` reads JSON telemetry over serial (`/dev/ttyACM0` @ 115200 by default) and publishes `mowgli_interfaces/msg/Power` on `/power` when message type `T == 110`.
 
 Port and baud come from `config/params.yaml` (overridable at launch).
+
+**Scope today:** battery / `/power` only. It does not yet replace STM32 cmd_vel, heartbeat, IMU, emergency, or mower-control traffic from the stock bridge.
 
 ## Layout
 
@@ -34,150 +38,67 @@ src/
 
 | Machine | Role |
 |---|---|
-| **Mac + Docker Desktop** | Edit code, compile-check against ROS 2 Kilted / `mowgli_interfaces` |
-| **Raspberry Pi 4 (mower)** | Rebuild, run with real MowgliNext, talk to UGV02 over USB serial |
+| **Raspberry Pi 4 (mower)** | **Primary** for this project: edit (Cursor SSH), build, and run inside the official Mowgli ROS container with real USB serial |
+| **Mac + Docker Desktop** | **Optional** compile-check (`Macbuild.md`) — useful for larger work, not required here |
 
-Sync **source only**. Never copy `build/` or `install/` from Mac → Pi (different CPU arch and install paths).
-
-Docker Desktop on Mac does **not** reliably pass through USB serial devices. Hardware bring-up of the UGV02 happens on the Pi.
+**Same-container cutover:** Mowgli stays installer-managed; this repo stays in its own git tree; they join at runtime by bind-mounting the clone into the Mowgli container (`docker-compose.override.yml` in the Mowgli install dir). No sidecar bridge container.
 
 ```
-Mac (edit + colcon check)  --git/rsync source-->  Pi 4 (rebuild + run + serial)
+Pi: clone this repo → override mounts it into Mowgli → disable stock hardware_bridge → colcon + launch ugv_hardware_bridge
 ```
+
+Never copy `build/` or `install/` between Mac and Pi (different CPU arch and install paths). Docker Desktop on Mac does **not** reliably pass through USB serial — hardware bring-up is on the Pi.
+
+Full steps: **[Pibuild.md](Pibuild.md)**.
 
 ---
 
-## Mac: develop in Docker
+## Pi 4: build and run (summary)
 
-### Start the container
+See **[Pibuild.md](Pibuild.md)** for the full guide. In short:
 
-```bash
-docker compose -f docker-compose.dev.yml up -d --build
-docker exec -it ugv02-ros-dev bash
-```
+1. Clone or `git pull` this repo on the Pi.
+2. In the Mowgli install directory, add a `docker-compose.override.yml` that bind-mounts the clone into the existing Mowgli ROS service (not a second `ugv-bridge` service).
+3. Keep stock `hardware_bridge` out of bringup (do **not** use `HARDWARE_BACKEND=mavros` for this).
+4. `docker compose up -d`, then `docker exec` into the Mowgli container.
+5. Source ROS + Mowgli install → `colcon build --packages-select serial ugv_mowgli_bridge` → launch `ugv_hardware_bridge`.
+6. Confirm `/power` is published by `ugv_hardware_bridge`.
 
-### Provide `mowgli_interfaces`
+### Disable stock / enable UGV (why)
 
-`docker-compose.dev.yml` mounts your Mac MowgliNext clone read-only:
-
-| Host (Mac) | Container |
+| Interface | Role |
 |---|---|
-| `/Volumes/iHome/Users/dub/Code/mowglinext` (default) | `/mowgli` |
+| Stock `hardware_bridge` | COBS serial to STM32; publishes `/power`, `/status`, IMU; motors/heartbeat |
+| `ugv_mowgli_bridge` | JSON serial to UGV02 ESP32; publishes `/power` for battery (`T == 110`) |
 
-Override with `MOWGLI_HOST` if the path changes:
-
-```bash
-MOWGLI_HOST=/other/path/mowglinext docker compose -f docker-compose.dev.yml up -d
-```
-
-Inside the container, link the interfaces package into this workspace (once per container/workspace):
-
-```bash
-ln -sfn /mowgli/ros2/src/mowgli_interfaces /workspace/src/mowgli_interfaces
-```
-
-If you already have a built Mowgli overlay, you can skip the symlink and source that install instead:
-
-```bash
-source /mowgli/ros2/install/setup.bash
-```
-
-### Install bridge deps and build
-
-`nlohmann-json3-dev` is installed in the image. The `serial` package is built from `src/serial` in this workspace.
-
-```bash
-source /opt/ros/kilted/setup.bash
-# if using a prebuilt Mowgli overlay instead of the symlink:
-# source /mowgli/ros2/install/setup.bash
-
-cd /workspace
-colcon build --packages-select serial mowgli_interfaces ugv_mowgli_bridge
-source install/setup.bash
-```
-
-If you sourced a Mowgli install overlay, omit `mowgli_interfaces` from `--packages-select`.
-
-Use this step to catch compile/API errors. Run against hardware on the Pi.
+Only one should own the UGV serial device and `/power`. Quick stop for testing: `pkill -f hardware_bridge_node` inside the container. Persistent: omit `hardware_bridge_node` from the Mowgli launch used on the Pi.
 
 ---
 
-## Sync Mac → Pi
+## Optional: Mac Docker compile-check
 
-### Recommended: Git
+Not required for this small project. If you want an offline Kilted build against a local MowgliNext clone, see **[Macbuild.md](Macbuild.md)** (`Dockerfile.dev` + `docker-compose.dev.yml`).
 
-```bash
-# Mac
-git add -A
-git commit -m "Update UGV bridge"
-git push
+---
 
-# Pi
-cd ~/ugv02-mower-bridge   # or your clone path
-git pull
-```
+## Optional: sync helpers
 
-### Fast iteration: rsync
-
-Set your Pi host once:
+If you edit on a Mac and want to push source to the Pi without using git on the mower:
 
 ```bash
-export PI_HOST=pi@192.168.1.50          # user@ip or hostname
-export PI_REPO=~/ugv02-mower-bridge     # remote path to this repo
-```
-
-Then from the Mac repo root:
-
-```bash
+export PI_HOST=pi@192.168.1.50
+export PI_REPO=~/ugv02-mower-bridge
 ./scripts/sync-to-pi.sh
 ```
 
-This syncs `src/` (including `serial` and `ugv_mowgli_bridge`), excluding `mowgli_interfaces` — use the mower's existing MowgliNext tree for that.
-
-Or manually:
-
-```bash
-rsync -avz --delete \
-  --exclude build --exclude install --exclude log --exclude .git \
-  --exclude mowgli_interfaces \
-  ./src/ \
-  "${PI_HOST}:${PI_REPO}/src/"
-```
-
----
-
-## Pi 4: build and run with Mowgli
-
-MowgliNext is already installed on the mower. After `git pull` or rsync:
-
-```bash
-ssh pi@MOWER_IP
-cd ~/ugv02-mower-bridge
-
-# Enter the ROS/Mowgli environment used on the mower
-# (container name depends on your mowglinext install)
-docker exec -it <mowgli-ros-container> bash
-
-source /opt/ros/kilted/setup.bash
-source /path/to/mowgli/install/setup.bash   # provides mowgli_interfaces
-
-cd /path/to/ugv02-mower-bridge            # workspace mounted into that container
-colcon build --packages-select serial ugv_mowgli_bridge
-source install/setup.bash
-
-ros2 launch ugv_mowgli_bridge ugv_hardware_bridge.launch.py
-# or: ros2 run ugv_mowgli_bridge ugv_hardware_bridge
-```
-
-Confirm the UGV02 appears (often `/dev/ttyACM0`) and that the process/container has device access (`privileged` or an explicit `/dev` mapping).
-
-Change port/baud in `src/ugv_mowgli_bridge/config/params.yaml` if needed.
+Or `git push` from Mac / Pi and `git pull` on the other machine. Still rebuild on the Pi after syncing.
 
 ---
 
 ## Day-to-day loop
 
-1. Edit on Mac (Cursor + Docker).
-2. `colcon build` in the Mac container to verify compile.
-3. `git push` or `./scripts/sync-to-pi.sh`.
-4. On Pi: `git pull` → rebuild → launch → check `/power`.
+1. On Pi (Cursor SSH): edit this repo.
+2. In the Mowgli container: rebuild → ensure stock `hardware_bridge` is off → launch UGV bridge → check `/power`.
+3. Commit when you want (Pi or Mac).
+
+Optional larger workflow: compile-check on Mac (`Macbuild.md`), then sync/pull on the Pi and follow `Pibuild.md`.

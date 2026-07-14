@@ -1,6 +1,12 @@
-# Mac build commands
+# Mac build commands (optional)
 
-This repo develops against ROS 2 Kilted inside Docker (`Dockerfile.dev` + `docker-compose.dev.yml`).  
+**Not required for this small UGV bridge project.**
+
+Prefer developing and building on the Pi inside the official Mowgli ROS container — see **[Pibuild.md](Pibuild.md)**.
+
+Mac Docker is still useful for **larger** development: offline compile-checks against ROS 2 Kilted / a local MowgliNext clone, heavier iteration without tying up the mower, or multi-package work before you sync source to the Pi.
+
+This optional path uses `Dockerfile.dev` + `docker-compose.dev.yml`.  
 Use these commands from the **repo root**.
 
 ---
@@ -105,7 +111,7 @@ What this does:
 - Builds the serial library, interfaces (if selected), and the UGV bridge package.
 - Sources the workspace so `ros2` can find the new packages.
 
-This step is for compile-checking on Mac/Docker. Run against real hardware on the Pi (see `Pibuild.md`).
+This step is only a Mac/Docker compile-check. Hardware bring-up and the same-container cutover live on the Pi (`Pibuild.md`).
 
 ---
 
@@ -124,7 +130,7 @@ Then re-run the colcon steps in §3 (symlink in §2 only if missing).
 
 ## 4. If the build succeeded — commit to git (host shell)
 
-Only after `colcon build` finishes cleanly. Do this on the **Mac host** (repo root), not inside the container — the workspace is bind-mounted, so source edits are already on disk.
+Only after `colcon build` finishes cleanly (when you are using this optional Mac path). Do this on the **Mac host** (repo root), not inside the container — the workspace is bind-mounted, so source edits are already on disk.
 
 Do **not** commit `build/`, `install/`, or `log/` (those are arch-specific artifacts).
 
@@ -143,4 +149,6 @@ EOF
 git push
 ```
 
-Adjust the commit message to match what changed. After push, continue on the Pi with `Pibuild.md`.
+Adjust the commit message to match what changed. On the Pi, `git pull` (or sync) and follow `Pibuild.md` — Mac build artifacts are never copied to the mower.
+
+If you skip Mac entirely, commit from the Pi instead; this section is optional.
