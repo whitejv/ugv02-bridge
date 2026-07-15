@@ -1,22 +1,23 @@
 # Pi build commands (same-container)
 
 Canonical guide for running the UGV bridge on the **Raspberry Pi 4** (mower).
+Use these steps for a **routine / reproducible cutover build**.
 
 ## Philosophy
 
 | Piece | Who owns it |
 |---|---|
-| **Mowgli stack** | Official installer (`~/mowgli` or your install dir) |
-| **This repo** | Your code only (`ugv02-mower-bridge`) |
+| **Mowgli stack** | Official installer (`~/mowglinext` on this Pi) |
+| **This repo** | Your code only (`~/ugv02-bridge`) |
 | **Join point** | Runtime: bind-mount this repo into the **existing** Mowgli ROS container via `docker-compose.override.yml` |
 
 No sidecar `ugv-bridge` container. One ROS graph, one DDS domain, `mowgli_interfaces` already on the path.
 
-This package **replaces** MowgliNext’s stock serial `hardware_bridge` for the UGV02. Do not run both — they fight over the serial device and both publish `/power`.
+This package **replaces** MowgliNext’s stock serial `hardware_bridge` for the UGV02. Do not run both at once — they fight over the serial device and both publish `/hardware_bridge/power`.
 
-**Scope today:** battery / `/power` only (`T == 110`). Not yet a full replacement for cmd_vel, heartbeat, IMU, emergency, or mower-control.
+**Scope today:** battery / `/hardware_bridge/power` only (`T == 110`). Not yet a full replacement for cmd_vel, heartbeat, IMU, emergency, or mower-control.
 
-For this small project you can develop entirely on the Pi (Cursor SSH). Mac Docker is optional — see `Macbuild.md`.
+Never copy Mac `build/` or `install/` to the Pi (different CPU arch). Compile only inside `mowgli-ros2`.
 
 ---
 
@@ -24,148 +25,322 @@ For this small project you can develop entirely on the Pi (Cursor SSH). Mac Dock
 
 | Where | Shell | Why |
 |---|---|---|
-| **Pi host** | `bash` over SSH | `git`, compose override, `docker compose` / `docker exec`. |
+| **Pi host** | `bash` over SSH | `git`, apply patches, compose override, `docker compose` / `docker exec`. |
 | **Inside the Mowgli ROS container** | `bash` | ROS setup scripts and `colcon` expect bash. |
+
+Paths used on this Pi:
+
+| Host | Container |
+|---|---|
+| `~/ugv02-bridge` | `/ugv02-bridge` |
+| `~/mowglinext/docker` | compose project dir |
+| container name `mowgli-ros2` | service name `mowgli` |
 
 ---
 
-## 1. Clone or pull this repo (Pi host)
+## Routine cutover build (full sequence)
+
+Run these on the **Pi host** unless a step says “inside container”.
+
+### 1. Pull this repo
 
 ```bash
-ssh pi@MOWER_IP
-
-# first time:
-# git clone <your-remote-url> ~/ugv02-mower-bridge
-
-cd ~/ugv02-mower-bridge   # or your clone path
+cd ~/ugv02-bridge
 git pull
-```
-
-Confirm sources are present:
-
-```bash
 git log -1 --oneline
 ls src/ugv_mowgli_bridge
 ```
 
----
+### 2. Patch Mowgli launch files (source tree)
 
-## 2. Join at runtime: `docker-compose.override.yml`
+Patched copies live in this repo so `~/mowglinext` is only changed when you apply them:
 
-Create or edit this file in your **Mowgli installation directory** (where you ran the installer — often `~/mowgli`), **not** as the live compose file at this repo’s root.
-
-Goals:
-
-1. Bind-mount this clone into the Mowgli ROS service.
-2. Do **not** add a separate `ugv-bridge` service.
-3. Keep stock `hardware_bridge` out of bringup (see §3).
-
-Example (adjust service name, user path, and container paths to match your install):
-
-```yaml
-# Place in Mowgli install dir, e.g. ~/mowgli/docker-compose.override.yml
-services:
-  mowgli:   # ← use the real service name from docker compose config / docker compose ps
-    volumes:
-      # Host clone → path inside the Mowgli ROS container
-      - /home/USER/ugv02-mower-bridge:/ugv02-mower-bridge
-    # Ensure the stock hardware_bridge node is NOT started.
-    # Prefer a launch that omits hardware_bridge_node, or a custom
-    # bringup launch you control. Do NOT use HARDWARE_BACKEND=mavros
-    # for this cutover (that selects MAVROS, not the UGV02 bridge).
-    #
-    # Example shape only — match your installer’s command:
-    # command: >
-    #   bash -c "source /opt/ros/kilted/setup.bash &&
-    #            source /ros2_ws/install/setup.bash &&
-    #            ros2 launch mowgli_bringup full_system.launch.py
-    #            <args that skip hardware_bridge_node>"
-```
-
-Find the real service / container name:
+| Directory | Purpose |
+|---|---|
+| `mowgli-orig-files/` | Baseline snapshots of the stock launch files |
+| `mowgli-replace-files/` | Same paths with `use_hardware_bridge` (default `true`) |
 
 ```bash
-cd ~/mowgli   # or your Mowgli install dir
+cd ~/ugv02-bridge
+./scripts/apply-mowgli-replace-files.sh --dry-run   # preview
+./scripts/apply-mowgli-replace-files.sh             # copy replace → ../mowglinext
+```
+
+Files written into `~/mowglinext`:
+
+- `ros2/src/mowgli_bringup/launch/mowgli.launch.py`
+- `ros2/src/mowgli_bringup/launch/full_system.launch.py`
+
+Confirm the patch is present:
+
+```bash
+grep -n use_hardware_bridge \
+  ~/mowglinext/ros2/src/mowgli_bringup/launch/mowgli.launch.py \
+  ~/mowglinext/ros2/src/mowgli_bringup/launch/full_system.launch.py
+```
+
+Restore stock launch files later if needed:
+
+```bash
+./scripts/apply-mowgli-replace-files.sh --restore
+```
+
+Override destination if your checkout is elsewhere:
+
+```bash
+MOWGLI_ROOT=/path/to/mowglinext ./scripts/apply-mowgli-replace-files.sh
+```
+
+### 3. Install compose override
+
+Copy the example into the Mowgli **docker** directory (where `docker-compose.yaml` lives):
+
+```bash
+cp ~/ugv02-bridge/deploy/docker-compose.override.yml \
+   ~/mowglinext/docker/docker-compose.override.yml
+```
+
+That override does three things:
+
+1. Bind-mounts `~/ugv02-bridge` → `/ugv02-bridge`
+2. Bind-mounts the patched source launch files over `/ros2_ws/install/mowgli_bringup/share/mowgli_bringup/launch/` so the image picks up `use_hardware_bridge` without rebuilding the Mowgli image
+3. Sets the `mowgli` service command to `/ugv02-bridge/scripts/ugv-cutover-entrypoint.sh`
+
+Confirm service names:
+
+```bash
+cd ~/mowglinext/docker
 docker compose config --services
 docker compose ps
 ```
 
-Apply the override and restart:
+### 4. (Recommended) Confirm ESP32 serial on the host
 
 ```bash
-cd ~/mowgli
-docker compose up -d
+ls -l /dev/ttyACM* /dev/ttyUSB* 2>/dev/null || echo "no USB serial yet"
 ```
 
----
+Default in `src/ugv_mowgli_bridge/config/params.yaml` is `/dev/ttyACM0` @ 115200. Edit that file before building/restarting if your device name differs.
 
-## 3. Disable Mowgli’s stock serial interface
+The bridge still starts without a device (serial open fails, node stays up); battery messages only appear once the port exists.
 
-Stock bringup starts `hardware_bridge` (`mowgli_hardware`) — COBS serial to the STM32 on `/dev/mowgli` or `/dev/ttyACM0`.
-
-Check inside the container:
+### 5. Recreate `mowgli` so the override takes effect
 
 ```bash
-docker exec -it <mowgli-ros-container> bash
-
-ros2 node list | grep -i hardware
-ros2 topic info /power
+cd ~/mowglinext/docker
+docker compose up -d mowgli
 ```
 
-### Session (quick test)
+Confirm the running container picked up the override:
 
 ```bash
-ros2 lifecycle set /hardware_bridge shutdown 2>/dev/null || true
-pkill -f hardware_bridge_node || true
-
-ros2 node list | grep -i hardware || echo "stock hardware_bridge not running"
+docker inspect mowgli-ros2 --format 'Cmd={{json .Config.Cmd}}'
+docker inspect mowgli-ros2 --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}' \
+  | grep -E 'ugv02-bridge|mowgli.launch|full_system'
 ```
 
-### Persistent (survives reboot / stack restart)
+Expected:
 
-Keep `hardware_bridge_node` out of the launch used by the Mowgli service (compose `command:` and/or `mowgli_bringup` launch files). Pointing `serial_port` in `hardware_bridge.yaml` at a dummy path is not enough — the node can still claim `/power`.
+- `Cmd=["/ugv02-bridge/scripts/ugv-cutover-entrypoint.sh"]`
+- mounts for `/ugv02-bridge` and the two launch files
 
----
+### 6. Watch the automatic colcon build + launch
 
-## 4. Build and enable the UGV bridge (inside Mowgli container)
+On first start (or when `src/` is newer than `install/`), the entrypoint runs:
 
-```bash
-docker exec -it <mowgli-ros-container> bash
-
-source /opt/ros/kilted/setup.bash
-source /ros2_ws/install/setup.bash   # typical Mowgli overlay; provides mowgli_interfaces
-
-cd /ugv02-mower-bridge               # path from the override mount
+```text
 colcon build --packages-select serial ugv_mowgli_bridge
-source install/setup.bash
+```
 
-ros2 node list | grep -i hardware || echo "stock hardware_bridge not running"
-ls /dev/ttyACM* /dev/ttyUSB* 2>/dev/null
+then launches:
 
-ros2 launch ugv_mowgli_bridge ugv_hardware_bridge.launch.py
-# or: ros2 run ugv_mowgli_bridge ugv_hardware_bridge
+1. `ros2 launch mowgli_bringup full_system.launch.py … use_hardware_bridge:=false`
+2. `ros2 launch ugv_mowgli_bridge ugv_hardware_bridge.launch.py`
+
+Follow logs:
+
+```bash
+docker logs -f mowgli-ros2
+```
+
+Look for:
+
+```text
+[ugv-cutover] Building serial + ugv_mowgli_bridge...
+Finished <<< serial
+Finished <<< ugv_mowgli_bridge
+[ugv-cutover] Launching full_system with use_hardware_bridge:=false
+[ugv-cutover] Launching ugv_hardware_bridge
+```
+
+`Ctrl+C` exits the log follow only (does not stop the container).
+
+Artifacts land on the host at `~/ugv02-bridge/build/` and `~/ugv02-bridge/install/` (bind-mounted).
+
+### 7. Verify cutover
+
+```bash
+docker exec -it mowgli-ros2 bash -lc '
+  set +u
+  source /opt/ros/kilted/setup.bash
+  source /ros2_ws/install/setup.bash
+  source /ugv02-bridge/install/setup.bash
+  set +u
+
+  echo "=== nodes ==="
+  ros2 node list | grep -E "hardware_bridge|ugv" || true
+
+  echo "=== /hardware_bridge/power ==="
+  ros2 topic info /hardware_bridge/power -v
+
+  echo "=== serial devices ==="
+  ls -l /dev/ttyACM* /dev/ttyUSB* 2>/dev/null || echo "no USB serial"
+'
+```
+
+**Success looks like:**
+
+| Check | Expected |
+|---|---|
+| Stock node | `/hardware_bridge` **absent** |
+| UGV node | `/ugv_hardware_bridge` **present** |
+| Power publisher | only `ugv_hardware_bridge` on `/hardware_bridge/power` |
+| Subscribers | typically `behavior_tree_node`, `diagnostics_node`, `foxglove_bridge` |
+
+Echo live battery (needs ESP32):
+
+```bash
+docker exec -it mowgli-ros2 bash -lc '
+  set +u
+  source /opt/ros/kilted/setup.bash
+  source /ros2_ws/install/setup.bash
+  source /ugv02-bridge/install/setup.bash
+  ros2 topic echo /hardware_bridge/power --once
+'
+```
+
+Do **not** use `HARDWARE_BACKEND=mavros` for this cutover — that selects MAVROS, not the UGV bridge.
+
+---
+
+## Day-to-day rebuild (after first cutover)
+
+### Code-only change in `ugv_mowgli_bridge` / `serial`
+
+Either restart so the entrypoint rebuilds if sources are newer:
+
+```bash
+cd ~/mowglinext/docker
+docker compose restart mowgli
+docker logs -f mowgli-ros2
+```
+
+Or rebuild manually without recreating the whole stack:
+
+```bash
+docker exec -it mowgli-ros2 bash -lc '
+  set +u
+  source /opt/ros/kilted/setup.bash
+  source /ros2_ws/install/setup.bash
+  cd /ugv02-bridge
+  colcon build --packages-select serial ugv_mowgli_bridge
+  source install/setup.bash
+'
+```
+
+Then relaunch the UGV node (or restart `mowgli`):
+
+```bash
+cd ~/mowglinext/docker
+docker compose restart mowgli
+```
+
+### Launch-patch change (`mowgli-replace-files/`)
+
+```bash
+cd ~/ugv02-bridge
+./scripts/apply-mowgli-replace-files.sh
+cd ~/mowglinext/docker
+docker compose up -d mowgli
+```
+
+### Param / serial device change
+
+Edit `src/ugv_mowgli_bridge/config/params.yaml`, rebuild (so `install/.../config/params.yaml` updates), restart `mowgli`.
+
+---
+
+## Manual build only (override already active)
+
+If `/ugv02-bridge` is already mounted and you only want a compile check:
+
+```bash
+docker exec -it mowgli-ros2 bash -lc '
+  set +u
+  source /opt/ros/kilted/setup.bash
+  source /ros2_ws/install/setup.bash
+  cd /ugv02-bridge
+  colcon build --packages-select serial ugv_mowgli_bridge
+'
 ```
 
 Notes:
 
-- Omit `mowgli_interfaces` from `--packages-select` — use the mower’s Mowgli install.
-- Port/baud: `src/ugv_mowgli_bridge/config/params.yaml` (often `/dev/ttyACM0` @ 115200).
-- The Mowgli container already needs `/dev` access (`privileged` or device mounts from the installer).
-
-Verify cutover:
-
-```bash
-ros2 topic info /power          # publisher should be ugv_hardware_bridge
-ros2 topic echo /power
-```
+- Omit `mowgli_interfaces` from `--packages-select` — use Mowgli’s install.
+- Always `set +u` (or avoid `set -u`) before sourcing ROS setup scripts; they reference optional unbound vars (e.g. `AMENT_TRACE_SETUP_FILES`). The cutover entrypoint already does this.
 
 ---
 
-## Day-to-day loop (Pi + Cursor SSH)
+## Session-only stock bridge stop (no compose cutover)
 
-1. Connect Cursor to the Pi; open `~/ugv02-mower-bridge`.
-2. Edit and save.
-3. In the Mowgli container: `colcon build --packages-select serial ugv_mowgli_bridge` then re-launch (or restart) `ugv_hardware_bridge`.
-4. Check: `ros2 topic echo /power` (and container logs if needed).
+Quick test without the override entrypoint:
 
-Optional: commit from the Pi (or Mac) and `git push` when you want a remote backup. Never copy `build/` or `install/` between machines — different CPU arch.
+```bash
+docker exec -it mowgli-ros2 bash -lc '
+  set +u
+  source /opt/ros/kilted/setup.bash
+  source /ros2_ws/install/setup.bash
+  ros2 lifecycle set /hardware_bridge shutdown 2>/dev/null || true
+  pkill -f hardware_bridge_node || true
+  ros2 node list | grep -i hardware || echo "stock hardware_bridge not running"
+'
+```
+
+This does **not** survive container restart. Prefer the replace-files + override cutover for a lasting setup.
+
+---
+
+## Troubleshooting
+
+| Symptom | What to do |
+|---|---|
+| Container restart loop; logs show `AMENT_TRACE_SETUP_FILES: unbound variable` | Entrypoint must `set +u` before sourcing ROS setup. Pull latest `scripts/ugv-cutover-entrypoint.sh` and `docker compose restart mowgli`. |
+| Override file present but still stock `Cmd=ros2 launch … full_system` | `cd ~/mowglinext/docker && docker compose up -d mowgli` (recreate), not only `restart`. |
+| `Failed to open serial port: No such file or directory` | Plug ESP32; `ls /dev/ttyACM*`; fix `params.yaml`; rebuild + restart. |
+| Stock `/hardware_bridge` still present | Confirm launch patches applied + install bind-mounts + `use_hardware_bridge:=false` in `docker logs`. |
+| No `/ugv_hardware_bridge` | Check `docker logs mowgli-ros2` for colcon failure; ensure `install/setup.bash` exists on host. |
+| Undo cutover | `./scripts/apply-mowgli-replace-files.sh --restore`, remove or rename `~/mowglinext/docker/docker-compose.override.yml`, then `docker compose up -d mowgli`. |
+
+---
+
+## Checklist (copy/paste)
+
+```bash
+# Host
+cd ~/ugv02-bridge && git pull
+./scripts/apply-mowgli-replace-files.sh
+cp deploy/docker-compose.override.yml ~/mowglinext/docker/docker-compose.override.yml
+ls /dev/ttyACM* /dev/ttyUSB* 2>/dev/null || true
+cd ~/mowglinext/docker && docker compose up -d mowgli
+docker logs -f mowgli-ros2   # wait for Finished <<< ugv_mowgli_bridge, then Ctrl+C
+
+# Verify
+docker exec -it mowgli-ros2 bash -lc '
+  set +u
+  source /opt/ros/kilted/setup.bash
+  source /ros2_ws/install/setup.bash
+  source /ugv02-bridge/install/setup.bash
+  ros2 node list | grep -E "hardware_bridge|ugv"
+  ros2 topic info /hardware_bridge/power -v
+'
+```

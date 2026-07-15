@@ -1,0 +1,17 @@
+# Place/copy this file to your Mowgli docker dir as docker-compose.override.yml
+# (typically ~/mowglinext/docker/docker-compose.override.yml), then:
+#   cd ~/mowglinext/docker && docker compose up -d mowgli
+#
+# Prerequisites:
+#   1. ./scripts/apply-mowgli-replace-files.sh   # patch mowglinext source launch files
+#   2. This override bind-mounts those source files over the installed share
+#      so the running image picks up use_hardware_bridge without rebuilding.
+#   3. ESP32 serial present (default /dev/ttyACM0 in ugv params.yaml).
+
+services:
+  mowgli:
+    volumes:
+      - /home/pi/ugv02-bridge:/ugv02-bridge
+      - /home/pi/mowglinext/ros2/src/mowgli_bringup/launch/mowgli.launch.py:/ros2_ws/install/mowgli_bringup/share/mowgli_bringup/launch/mowgli.launch.py:ro
+      - /home/pi/mowglinext/ros2/src/mowgli_bringup/launch/full_system.launch.py:/ros2_ws/install/mowgli_bringup/share/mowgli_bringup/launch/full_system.launch.py:ro
+    command: ["/ugv02-bridge/scripts/ugv-cutover-entrypoint.sh"]
