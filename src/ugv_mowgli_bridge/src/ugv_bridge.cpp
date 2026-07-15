@@ -75,6 +75,11 @@ UGVBridge::UGVBridge() : Node("ugv_hardware_bridge")
   cmd_repeat_timer_ =
       create_wall_timer(std::chrono::milliseconds(500), std::bind(&UGVBridge::on_cmd_repeat, this));
 
+  // BT IsEmergency fail-safe trips if no /hardware_bridge/emergency for >2s.
+  emergency_heartbeat_timer_ = create_wall_timer(
+      std::chrono::milliseconds(500), std::bind(&UGVBridge::on_emergency_heartbeat, this));
+  publish_emergency(now());
+
   try {
     serial_port_.setPort(serial_port_name_);
     serial_port_.setBaudrate(baud_rate_);
@@ -169,6 +174,11 @@ void UGVBridge::on_cmd_repeat()
     return;
   }
   send_motion(vx, wz);
+}
+
+void UGVBridge::on_emergency_heartbeat()
+{
+  publish_emergency(now());
 }
 
 void UGVBridge::serial_read_loop()

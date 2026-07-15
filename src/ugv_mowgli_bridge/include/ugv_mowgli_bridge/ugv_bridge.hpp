@@ -45,6 +45,8 @@ private:
 
   // Timers
   rclcpp::TimerBase::SharedPtr cmd_repeat_timer_;
+  // Keep /hardware_bridge/emergency fresh — BT IsEmergency treats >2s silence as e-stop.
+  rclcpp::TimerBase::SharedPtr emergency_heartbeat_timer_;
 
   // Serial
   serial::Serial serial_port_;
@@ -80,6 +82,7 @@ private:
 
   void on_cmd_vel(const geometry_msgs::msg::TwistStamped::SharedPtr msg);
   void on_cmd_repeat();
+  void on_emergency_heartbeat();
   void send_json(const json& j);
   void send_motion(double vx, double wz);
   void send_emergency_stop_cmd();
