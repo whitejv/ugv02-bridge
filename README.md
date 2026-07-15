@@ -4,17 +4,22 @@ Custom hardware bridge connecting the Waveshare UGV02 (ESP32) to the MowgliNext 
 
 ## Goal
 
-Start minimal: publish battery status from UGV02 so Mowgli can understand it.
-
-This package **replaces** MowgliNext’s stock serial hardware bridge (`mowgli_hardware` / `hardware_bridge`) for the Waveshare UGV02. Do not run both at once — they fight over the serial device and both publish `/hardware_bridge/power`.
+Replace MowgliNext’s stock serial hardware bridge (`mowgli_hardware` / `hardware_bridge`) for the Waveshare UGV02. Do not run both at once — they fight over the serial device and both publish `/hardware_bridge/*`.
 
 ## Package
 
-`ugv_mowgli_bridge` reads JSON telemetry over serial (`/dev/ttyS0` @ 115200 by default on this Pi 4) and publishes `mowgli_interfaces/msg/Power` on `/hardware_bridge/power` when message type `T == 1001` (Waveshare base feedback; voltage field `v` is centivolts).
+`ugv_mowgli_bridge` reads Waveshare JSON telemetry over serial (`/dev/ttyS0` @ 115200 by default on this Pi 4; `T == 1001` base feedback, `v` in centivolts) and drives the robot with `T:13` ROS motion commands.
 
-Port and baud come from `config/params.yaml` (overridable at launch).
+Port, baud, `wheel_track`, and IMU LSB scales come from `config/params.yaml` (overridable at launch).
 
-**Scope today:** battery / `/hardware_bridge/power` only. It does not yet replace STM32 cmd_vel, heartbeat, IMU, emergency, or mower-control traffic from the stock bridge.
+**Interfaces:**
+
+| Direction | Topic / service |
+|---|---|
+| Publish | `/hardware_bridge/power`, `/status`, `/emergency` |
+| Publish | `/wheel_odom`, `/imu/data`, `/battery_state` |
+| Subscribe | `/cmd_vel` (`TwistStamped` → `T:13`) |
+| Services | `/hardware_bridge/mower_control`, `/emergency_stop` (stubs / soft e-stop) |
 
 ## Layout
 
@@ -68,16 +73,16 @@ See **[Pibuild.md](Pibuild.md)** for the full guide. In short:
 2. Apply patched launch files: `./scripts/apply-mowgli-replace-files.sh` (writes into `../mowglinext` only when you run it).
 3. Copy [`deploy/docker-compose.override.yml`](deploy/docker-compose.override.yml) to `~/mowglinext/docker/docker-compose.override.yml` (adjust paths if needed).
 4. `cd ~/mowglinext/docker && docker compose up -d mowgli` — entrypoint builds the UGV packages if needed, launches `full_system` with `use_hardware_bridge:=false`, then starts `ugv_hardware_bridge`.
-5. Confirm `/hardware_bridge/power` is published by `ugv_hardware_bridge`.
+5. Confirm `/ugv_hardware_bridge` is up and `/hardware_bridge/power` + `/status` publish.
 
 ### Disable stock / enable UGV (why)
 
 | Interface | Role |
 |---|---|
-| Stock `hardware_bridge` | COBS serial to STM32; publishes `/hardware_bridge/power`, status, IMU; motors/heartbeat |
-| `ugv_mowgli_bridge` | JSON serial to UGV02 ESP32; publishes `/hardware_bridge/power` for battery (`T == 110`) |
+| Stock `hardware_bridge` | COBS serial to STM32; full mower hardware contract |
+| `ugv_mowgli_bridge` | JSON serial to UGV02 ESP32; same Mowgli topics/services for this platform |
 
-Only one should own the serial device and `/hardware_bridge/power`. Persistent cutover: `use_hardware_bridge:=false` via the replace-files + compose override (do **not** use `HARDWARE_BACKEND=mavros` for this).
+Only one should own the serial device and `/hardware_bridge/*`. Persistent cutover: `use_hardware_bridge:=false` via the replace-files + compose override (do **not** use `HARDWARE_BACKEND=mavros` for this).
 
 ---
 

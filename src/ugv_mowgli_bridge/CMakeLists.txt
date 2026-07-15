@@ -6,6 +6,9 @@ find_package(rclcpp REQUIRED)
 find_package(mowgli_interfaces REQUIRED)
 find_package(serial REQUIRED)
 find_package(nlohmann_json REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 
 include_directories(include)
 
@@ -18,6 +21,9 @@ ament_target_dependencies(ugv_hardware_bridge
   rclcpp
   mowgli_interfaces
   serial
+  geometry_msgs
+  nav_msgs
+  sensor_msgs
 )
 
 target_link_libraries(ugv_hardware_bridge nlohmann_json::nlohmann_json)

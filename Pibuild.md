@@ -205,9 +205,11 @@ docker exec -it mowgli-ros2 bash -lc '
 | Stock node | `/hardware_bridge` **absent** |
 | UGV node | `/ugv_hardware_bridge` **present** |
 | Power publisher | only `ugv_hardware_bridge` on `/hardware_bridge/power` |
+| Status / emergency | `/hardware_bridge/status`, `/hardware_bridge/emergency` publishing |
+| Drive / sensors | `/cmd_vel` consumed; `/wheel_odom`, `/imu/data`, `/battery_state` publishing |
 | Subscribers | typically `behavior_tree_node`, `diagnostics_node`, `foxglove_bridge` |
 
-Echo live battery (needs ESP32):
+Echo live battery (needs ESP32 on `/dev/ttyS0`):
 
 ```bash
 docker exec -it mowgli-ros2 bash -lc '
@@ -216,6 +218,8 @@ docker exec -it mowgli-ros2 bash -lc '
   source /ros2_ws/install/setup.bash
   source /ugv02-bridge/install/setup.bash
   ros2 topic echo /hardware_bridge/power --once
+  ros2 topic echo /hardware_bridge/status --once
+  ros2 topic hz /wheel_odom
 '
 ```
 

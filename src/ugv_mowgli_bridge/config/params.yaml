@@ -2,3 +2,6 @@ ugv_hardware_bridge:
   ros__parameters:
     serial_port: "/dev/ttyS0"
     baud_rate: 115200
+    wheel_track: 0.22
+    accel_lsb_per_g: 16384.0
+    gyro_lsb_per_dps: 131.0
