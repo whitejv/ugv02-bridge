@@ -37,9 +37,11 @@ src/
         └── ugv_hardware_bridge.cpp
 mowgli-orig-files/          # baseline copies of Mowgli launch files
 mowgli-replace-files/       # patched launch files (use_hardware_bridge)
+config/ugv_robot_profile.yaml  # CUSTOM + 3S battery pins for mowgli_robot.yaml
 deploy/docker-compose.override.yml
 scripts/
 ├── apply-mowgli-replace-files.sh
+├── apply-ugv-robot-profile.sh
 ├── ugv-cutover-entrypoint.sh
 └── sync-to-pi.sh
 ```
@@ -74,6 +76,7 @@ See **[Pibuild.md](Pibuild.md)** for the full guide. In short:
 3. Copy [`deploy/docker-compose.override.yml`](deploy/docker-compose.override.yml) to `~/mowglinext/docker/docker-compose.override.yml` (adjust paths if needed).
 4. `cd ~/mowglinext/docker && docker compose up -d mowgli` — entrypoint builds the UGV packages if needed, launches `full_system` with `use_hardware_bridge:=false`, then starts `ugv_hardware_bridge`.
 5. Confirm `/ugv_hardware_bridge` is up and `/hardware_bridge/power` + `/status` publish.
+6. Keep 3S battery pins: `./scripts/apply-ugv-robot-profile.sh --check` (see **Pibuild.md** — GUI Settings can overwrite YardForce voltages).
 
 ### Disable stock / enable UGV (why)
 

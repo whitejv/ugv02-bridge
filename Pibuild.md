@@ -8,14 +8,15 @@ Use these steps for a **routine / reproducible cutover build**.
 | Piece | Who owns it |
 |---|---|
 | **Mowgli stack** | Official installer (`~/mowglinext` on this Pi) |
-| **This repo** | Your code only (`~/ugv02-bridge`) |
+| **This repo** | Bridge code, `params.yaml`, replace-files, compose cutover, UGV robot profile |
 | **Join point** | Runtime: bind-mount this repo into the **existing** Mowgli ROS container via `docker-compose.override.yml` |
+| **GUI / `mowgli_robot.yaml`** | Operator settings (battery thresholds, dock, NTRIP, geometry) — **not** bridge cutover |
 
 No sidecar `ugv-bridge` container. One ROS graph, one DDS domain, `mowgli_interfaces` already on the path.
 
-This package **replaces** MowgliNext’s stock serial `hardware_bridge` for the UGV02. Do not run both at once — they fight over the serial device and both publish `/hardware_bridge/power`.
+This package **replaces** MowgliNext’s stock serial `hardware_bridge` for the UGV02. Do not run both at once — they fight over the serial device and both publish `/hardware_bridge/*`.
 
-**Scope today:** battery / `/hardware_bridge/power` only (`T == 110`). Not yet a full replacement for cmd_vel, heartbeat, IMU, emergency, or mower-control.
+**Interfaces today:** power/status/emergency, stub mower services, `/cmd_vel` → `T:13`, `/wheel_odom`, `/imu/data`, `/battery_state` from Waveshare `T:1001`.
 
 Never copy Mac `build/` or `install/` to the Pi (different CPU arch). Compile only inside `mowgli-ros2`.
 
@@ -225,7 +226,66 @@ docker exec -it mowgli-ros2 bash -lc '
 
 Do **not** use `HARDWARE_BACKEND=mavros` for this cutover — that selects MAVROS, not the UGV bridge.
 
+Also verify UGV-safe battery pins (GUI can overwrite these — see below):
+
+```bash
+cd ~/ugv02-bridge
+./scripts/apply-ugv-robot-profile.sh --check
+```
+
 ---
+
+## Stable UGV operation (keep it from drifting)
+
+### Ownership
+
+| Owned by | Examples | Rule |
+|---|---|---|
+| **ugv02-bridge** | serial `/dev/ttyS0`, `T:13` / `T:1001`, emergency heartbeat, replace-files, compose cutover | Re-apply after Mowgli upgrades; never rely on session `pkill` of the stock bridge |
+| **`mowgli_robot.yaml` (web GUI)** | `battery_*`, dock pose, NTRIP, geometry, lidar toggles | Pin 3S voltages; keep **mower model = CUSTOM** |
+
+Bridge cutover is restart-stable via replace-files + compose override + entrypoint. The fragile surface is **GUI-managed** `~/mowglinext/docker/config/mowgli/mowgli_robot.yaml`.
+
+### GUI footgun (YardForce voltages)
+
+Schema / named mower presets default to **~28.5 / 24 / 23 V**. Selecting a YardForce (or similar) model card + Save writes those onto disk. BT then maps an ~11–12 V 3S pack to **0%** and loops `CriticalBatteryDock` — the UI looks like it is toggling mowing/idle and battery looks empty.
+
+**Do not** pick a YardForce/Sabo model on this robot. Stay on **CUSTOM** with:
+
+| Key | UGV value |
+|---|---|
+| `battery_full_voltage` | `12.6` |
+| `battery_empty_voltage` | `10.5` |
+| `battery_critical_voltage` | `10.8` |
+
+Pinned copy in this repo: [`config/ugv_robot_profile.yaml`](config/ugv_robot_profile.yaml).
+
+```bash
+cd ~/ugv02-bridge
+./scripts/apply-ugv-robot-profile.sh --check    # exit 1 if drifted
+./scripts/apply-ugv-robot-profile.sh            # merge pins into mowgli_robot.yaml
+cd ~/mowglinext/docker && docker compose restart mowgli
+```
+
+Run `--check` after any GUI Settings save or Mowgli update. The script does **not** auto-apply on container start (avoids fighting the GUI mid-edit).
+
+### Smoke checklist (after any change)
+
+1. `/ugv_hardware_bridge` present; stock `/hardware_bridge` **absent**
+2. `ros2 topic echo /hardware_bridge/power --once` → ~11–12 V
+3. `./scripts/apply-ugv-robot-profile.sh --check` passes
+4. `/behavior_tree_node/high_level_status` stays mostly `IDLE` (not flapping `CRITICAL_BATTERY_*` / stale `EMERGENCY`)
+5. Optional: short `/cmd_vel_teleop` pulse still moves the base
+
+### After Mowgli installer upgrades
+
+```bash
+cd ~/ugv02-bridge
+./scripts/apply-mowgli-replace-files.sh
+./scripts/apply-ugv-robot-profile.sh --check   # or apply if needed
+cp deploy/docker-compose.override.yml ~/mowglinext/docker/docker-compose.override.yml
+cd ~/mowglinext/docker && docker compose up -d mowgli
+```
 
 ## Day-to-day rebuild (after first cutover)
 

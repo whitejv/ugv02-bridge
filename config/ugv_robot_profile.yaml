@@ -1,0 +1,12 @@
+# UGV02-safe pins for Mowgli's GUI-managed mowgli_robot.yaml.
+# Schema / named mower presets default to YardForce ~28.5/24/23 V — wrong for this 3S pack.
+# Apply or verify with: ./scripts/apply-ugv-robot-profile.sh [--check]
+#
+# Do not select a YardForce/Sabo model card in the web UI on this robot (CUSTOM only).
+
+mowgli:
+  ros__parameters:
+    mower_model: CUSTOM
+    battery_full_voltage: 12.6
+    battery_empty_voltage: 10.5
+    battery_critical_voltage: 10.8
